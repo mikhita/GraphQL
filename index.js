@@ -80,10 +80,10 @@ let books = [
   },
 ]
 
-const typeDefs = `
+const typeDefs = `  
   type Author {
     name: String!
-    born: Int! 
+    born: Int
     id: ID!
   }
 
@@ -94,28 +94,43 @@ const typeDefs = `
     genres: [String!]!
     id: ID!
   }
+  type AllAuthors {
+    name: String!
+    bookCount: Int!
+  }
+  
   type Query {
     bookCount: Int!
     authorCount: Int!
     allBooks: [Book!]!
+    allAuthors: [AllAuthors!]!
   }
-`
+`;
 
 const resolvers = {
   Query: {
     bookCount: () => books.length,
     authorCount: () => authors.length,
-    allBooks: () => books
+    allBooks: () => books,
+    allAuthors: () => {
+      return authors.map(author => {
+        const bookCount = books.filter(book => book.author === author.name).length;
+        return {
+          name: author.name,
+          bookCount: bookCount,
+        };
+      });
+    }
   }
-}
+};
 
 const server = new ApolloServer({
   typeDefs,
   resolvers,
-})
+});
 
 startStandaloneServer(server, {
   listen: { port: 4000 },
 }).then(({ url }) => {
-  console.log(`Server ready at ${url}`)
-})
+  console.log(`Server ready at ${url}`);
+});
