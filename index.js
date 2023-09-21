@@ -107,6 +107,9 @@ const typeDefs = `
       genres: [String!]!
     ): Book!
   }
+  type Mutation {
+    editAuthor(name: String!, setBornTo: Int!): Author
+  }
   
   type Query {
     bookCount: Int!
@@ -167,7 +170,17 @@ const resolvers = {
       author.bookCount++;
 
       return book;
-    }
+    },
+    editAuthor: (_, { name, setBornTo }) => {
+      const author = authors.find((author) => author.name === name);
+
+      if (author) {
+        author.born = setBornTo;
+        return author;
+      }
+
+      return null;
+    },
   }
 };
 
