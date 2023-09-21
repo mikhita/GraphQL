@@ -1,5 +1,6 @@
 const { ApolloServer } = require('@apollo/server')
-const { startStandaloneServer } = require('@apollo/server/standalone')
+const { startStandaloneServer } = require('@apollo/server/standalone');
+const { v4: uuid } = require('uuid');
 
 let authors = [
   {
@@ -98,6 +99,14 @@ const typeDefs = `
     name: String!
     bookCount: Int!
   }
+  type Mutation {
+    addBook(
+      title: String!
+      author: String!
+      published: Int!
+      genres: [String!]!
+    ): Book!
+  }
   
   type Query {
     bookCount: Int!
@@ -115,12 +124,10 @@ const resolvers = {
       let filteredBooks = books;
 
       if (author) {
-        // If author parameter is provided, filter books by author
         filteredBooks = filteredBooks.filter(book => book.author === author);
       }
 
       if (genre) {
-        // If genre parameter is provided, filter books by genre
         filteredBooks = filteredBooks.filter(book => book.genres.includes(genre));
       }
 
@@ -138,8 +145,33 @@ const resolvers = {
         };
       });
     }
+  },
+  Mutation: {
+    addBook: (_, args) => {
+      let author = authors.find(author => author.name === args.author);
+
+      if (!author) {
+        author = { name: args.author, id: uuid(), bookCount: 0 };
+        authors.push(author);
+      }
+
+      const book = {
+        title: args.title,
+        author: args.author,  // Return author's name instead of the object
+        published: args.published,
+        genres: args.genres,
+        id: uuid(),
+      };
+
+      books.push(book);
+      author.bookCount++;
+
+      return book;
+    }
   }
 };
+
+
 
 const server = new ApolloServer({
   typeDefs,
