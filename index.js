@@ -105,7 +105,6 @@ const typeDefs = `
   type Author {
     name: String!
     born: Int
-    id: ID!
   }
 
   type Book {
@@ -113,12 +112,14 @@ const typeDefs = `
     published: Int
     author: Author!
     genres: [String!]!
-    id: ID!
   }
   type AllAuthors {
     name: String!
     born: Int
     bookCount: Int!
+  }
+  schema {
+    mutation: Mutation
   }
   type Mutation {
     addBook(
@@ -208,20 +209,31 @@ const resolvers = {
   },
   Mutation: {
     addBook: async (root, args) => {
-      const book = new Book({ ...args })
-      try {
-        await book.save()
-      } catch (error) {
-        throw new GraphQLError('Saving user failed', {
-          extensions: {
-            code: 'BAD_USER_INPUT',
-            invalidArgs: args.name,
-            error
-          }
-        })
+      let author = await Author.findOne({ name: args.author });
+    
+      if (!author) {
+        // If the author doesn't exist, create a new author
+        author = new Author({ name: args.author });
+        console.log(author)
+        await author.save();
       }
-
-      return book
+    
+      // Create a new book
+      let book = new Book({
+        author: author._id,
+        genres: args.genres,
+        published: args.published,
+        title: args.title,
+      });
+    
+      // Save the book to the database
+      await book.save();
+    
+      // Return the book, including the author information
+      return {
+        ...book.toObject(),
+        author: author.toObject(), // Convert author to plain JavaScript object
+      };
     },
 
     editAuthor: async (_, { name, setBornTo }) => {
