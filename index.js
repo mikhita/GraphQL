@@ -1,6 +1,25 @@
 const { ApolloServer } = require('@apollo/server')
-const { startStandaloneServer } = require('@apollo/server/standalone');
-const { v4: uuid } = require('uuid');
+const { startStandaloneServer } = require('@apollo/server/standalone')
+const { GraphQLError } = require('graphql')
+
+const mongoose = require('mongoose')
+mongoose.set('strictQuery', false)
+const Author = require('./models/authors')
+const Book = require("./models/books")
+require('dotenv').config()
+
+const MONGODB_URI = process.env.MONGODB_URI
+
+console.log('connecting to', MONGODB_URI)
+
+mongoose.connect(MONGODB_URI)
+  .then(() => {
+    console.log('connected to MongoDB')
+  })
+  .catch((error) => {
+    console.log('error connection to MongoDB:', error.message)
+  })
+
 
 
 let authors = [
@@ -92,7 +111,7 @@ const typeDefs = `
   type Book {
     title: String
     published: Int
-    author: String!
+    author: Author!
     genres: [String!]!
     id: ID!
   }
@@ -124,60 +143,103 @@ const typeDefs = `
 
 const resolvers = {
   Query: {
-    bookCount: () => books.length,
-    authorCount: () => authors.length,
-    allBooks: (_, { author, genre }) => {
-      let filteredBooks = books;
-
-      if (author) {
-        filteredBooks = filteredBooks.filter(book => book.author === author);
+    bookCount: async () => {
+      try {
+        const count = await Book.countDocuments();
+        return count;
+      } catch (error) {
+        throw new Error('Unable to fetch book count.');
       }
-
-      if (genre) {
-        filteredBooks = filteredBooks.filter(book => book.genres.includes(genre));
-      }
-
-      return filteredBooks.map(book => ({
-        title: book.title,
-        author: book.author,
-        published: book.published
-      }));
     },
-    allAuthors: () => {
-      return authors.map(author => {
-        const bookCount = books.filter(book => book.author === author.name).length;
-        return {
-          name: author.name,
-          born: author.born,
-          bookCount: bookCount,
-        };
-      });
-    }
+    authorCount: async () => {
+      try {
+        const count = await Author.countDocuments();
+        return count;
+      } catch (error) {
+        throw new Error('Unable to fetch author count.');
+      }
+    },
+    allBooks: async (_, { author, genre }) => {
+      let query = {};
+    
+      if (author) {
+        const authorObj = await Author.findOne({ name: author });
+        if (authorObj) {
+          query.author = authorObj._id;
+        }
+      }
+    
+      if (genre) {
+        query.genres = genre;
+      }
+    
+      try {
+        const books = await Book.find(query).populate('author');
+        return books;
+      } catch (error) {
+        throw new Error('Unable to fetch books.');
+      }
+    },
+    allAuthors: async () => {
+      try {
+        const authorsWithBookCount = await Author.aggregate([
+          {
+            $lookup: {
+              from: 'books',
+              localField: '_id',
+              foreignField: 'author',
+              as: 'books'
+            }
+          },
+          {
+            $project: {
+              name: 1,
+              born: 1,
+              bookCount: { $size: '$books' }
+            }
+          }
+        ]);
+    
+        return authorsWithBookCount;
+      } catch (error) {
+        throw new Error('Unable to fetch authors with book count.');
+      }
+    },
   },
   Mutation: {
-    addBook: (root, args) => {
-      if (!authors.some(a => a.name === args.author)) {
-        const newAuth = {
-          name: args.author,
-          id: uuid()
-        }
-        authors = authors.concat(newAuth)
+    addBook: async (root, args) => {
+      const book = new Book({ ...args })
+      try {
+        await book.save()
+      } catch (error) {
+        throw new GraphQLError('Saving user failed', {
+          extensions: {
+            code: 'BAD_USER_INPUT',
+            invalidArgs: args.name,
+            error
+          }
+        })
       }
 
-      const book = { ...args, id: uuid() }
-      books = books.concat(book)
       return book
     },
-  
-    editAuthor: (_, { name, setBornTo }) => {
-      const author = authors.find((author) => author.name === name);
 
-      if (author) {
-        author.born = setBornTo;
-        return author;
+    editAuthor: async (_, { name, setBornTo }) => {
+      const author = await Author.findOne({ name });
+      author.born = setBornTo;
+      try {
+        await author.save();
+      } catch (error) {
+          throw new GraphQLError('Editing number failed', {
+            extensions: {
+              code: 'BAD_USER_INPUT',
+              invalidArgs: args.name,
+              error
+            }
+          })
       }
-
-      return null;
+  
+      return author;
     },
   }
 };
