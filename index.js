@@ -2,6 +2,7 @@ const { ApolloServer } = require('@apollo/server')
 const { startStandaloneServer } = require('@apollo/server/standalone')
 const { GraphQLError } = require('graphql')
 const jwt = require('jsonwebtoken')
+const bcrypt = require("bcrypt")
 
 const mongoose = require('mongoose')
 mongoose.set('strictQuery', false)
@@ -9,6 +10,7 @@ const Author = require('./models/authors')
 const Book = require("./models/books")
 const User = require('./models/user')
 require('dotenv').config()
+const saltRounds = 10
 
 const MONGODB_URI = process.env.MONGODB_URI
 
@@ -125,7 +127,7 @@ const typeDefs = `
   }
   type User {
     username: String!
-    favoriteGenre: String
+    favoriteGenre: String!
     id: ID
   }
   
@@ -141,7 +143,8 @@ const typeDefs = `
     ): Book
     createUser(
       username: String!
-      favoriteGenre: String
+      favoriteGenre: String!
+      passwordHash: String!
     ): User
     login(
       username: String!
@@ -160,6 +163,15 @@ const typeDefs = `
     me: User
   }
 `;
+
+const verifyToken = (token) => {
+  try {
+    const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+    return decodedToken;
+  } catch (error) {
+    throw new AuthenticationError('Invalid or missing token');
+  }
+};
 
 
 const resolvers = {
@@ -232,9 +244,8 @@ const resolvers = {
   },
   Mutation: {
     addBook: async (root, args, context) => {
-      if (!context.currentUser) {
-        throw new AuthenticationError('not authenticated');
-      }
+      const { token, ...bookArgs } = args;
+      verifyToken(token);
       let author = await Author.findOne({ name: args.author });
     
       if (!author) {
@@ -271,10 +282,8 @@ const resolvers = {
         author: author.toObject(), // Convert author to plain JavaScript object
       };
     },
-    editAuthor: async (_, { name, setBornTo }) => {
-      if (!context.currentUser) {
-        throw new AuthenticationError('not authenticated');
-      }
+    editAuthor: async (_, { name, setBornTo, token }) => {
+      verifyToken(token);
       const author = await Author.findOne({ name });
       author.born = setBornTo;
       try {
@@ -292,7 +301,10 @@ const resolvers = {
       return author;
     },
     createUser: async (root, args) => {
-      const user = new User({ username: args.username })
+      const user = new User({
+        username: args.username,
+        favoriteGenre: args.favoriteGenre,
+      })
   
       return await user.save()
         .catch(error => {
@@ -306,20 +318,26 @@ const resolvers = {
         })
     },
     login: async (root, args) => {
-      const user = await User.findOne({ username: args.username })
+      const { username, password } = args;
   
-      if ( !user || args.password !== 'secret123' ) {
-        throw new GraphQLError('wrong credentials', {
-          extensions: { code: 'BAD_USER_INPUT' }
-        })        
+      const user = await User.findOne({ username });
+  
+      if (!user) {
+        throw new Error('User not found');
+      }
+  
+      const passwordMatch = await bcrypt.compare(password, user.passwordHash);
+  
+      if (!passwordMatch) {
+        throw new Error('Wrong credentials');
       }
   
       const userForToken = {
         username: user.username,
         id: user._id,
-      }
+      };
   
-      return { value: jwt.sign(userForToken, process.env.JWT_SECRET) }
+      return { value: jwt.sign(userForToken, process.env.JWT_SECRET) };
     },
   }
 };
@@ -335,14 +353,12 @@ const server = new ApolloServer({
 startStandaloneServer(server, {
   listen: { port: 4001 },
   context: async ({ req, res }) => {
-    const auth = req ? req.headers.authorization : null
+    const auth = req ? req.headers.authorization : null;
+  
     if (auth && auth.startsWith('Bearer ')) {
-      const decodedToken = jwt.verify(
-        auth.substring(7), process.env.JWT_SECRET
-      )
-      const currentUser = await User
-        .findById(decodedToken.id).populate('authors')
-      return { currentUser }
+      const decodedToken = verifyToken(auth.substring(7));
+      const currentUser = await User.findById(decodedToken.id);
+      return { currentUser };
     }
   },
 }).then(({ url }) => {
